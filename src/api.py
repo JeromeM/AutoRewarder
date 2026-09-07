@@ -596,6 +596,9 @@ class AutoRewarderAPI:
         """
         cfg = self.global_settings.get_llm_config()
         cfg["effective_locale"] = self.global_settings.get_effective_locale()
+        # Lets the Settings UI label the blank model choice with the actual
+        # default id for the selected provider.
+        cfg["default_models"] = dict(llm.DEFAULT_MODELS)
         return cfg
 
     def set_llm_config(
@@ -617,6 +620,16 @@ class AutoRewarderAPI:
         except Exception as e:
             self.log(f"[WARNING] Failed to save LLM config: {e}")
             return False
+
+    def list_llm_models(self, provider, api_key):
+        """
+        Fetch the chat models `api_key` can use at `provider`, for the model
+        picker in Settings > Search terms. Never raises.
+
+        Returns:
+            dict: {ok, models: [{id, label}], error?} — see llm.list_models.
+        """
+        return llm.list_models(provider, api_key, logger=self.log)
 
     def set_detected_locale(self, locale):
         """

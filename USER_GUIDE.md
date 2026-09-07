@@ -217,8 +217,8 @@ Both are **off by default**, which keeps the normal behaviour: what already ran 
 
 By default, AutoRewarder draws its searches from a large built-in list of English queries. If you'd prefer searches that look natural in **your own language**, enable **"Generate search terms with AI (LLM)"** in the **Search terms** section of the Settings window and provide your own LLM API key (bring-your-own-key).
 
-- **Provider & model:** Choose OpenAI, Anthropic, or Google Gemini, and optionally a specific model (leave blank to use a sensible default for that provider).
-- **API key:** Paste a key from your chosen provider. It is stored locally in your `settings.json` (plain text) and is only sent to that provider to request queries — no personal data is shared.
+- **Provider & model:** Choose OpenAI, Anthropic, or Google Gemini. Leave the model on **Default** to use a sensible model for that provider, or click the refresh button next to the model field: it asks the provider which models your key can use and lets you pick one from the list, so you can follow new releases without typing anything. **Custom…** still lets you enter a model id by hand.
+- **API key:** Paste a key from your chosen provider — the **Get an API key** link under the field opens the right page (OpenAI Platform, Anthropic Console or Google AI Studio). The key is stored locally in your `settings.json` (plain text) and is only sent to that provider to request queries or list its models — no personal data is shared.
 - **Language:** Leave **`auto`** to follow the language of the computer running AutoRewarder (detected automatically), or type a locale such as `fr-FR`, `it-IT`, or `en-US` to force one.
 
 On each run, AutoRewarder asks the provider for a fresh batch of queries in your language. If generation fails for any reason — no key, an invalid key, an exceeded quota, or no internet — it silently falls back to the built-in list, so your run always completes.

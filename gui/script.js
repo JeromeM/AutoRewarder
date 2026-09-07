@@ -785,13 +785,14 @@ function open_settings_modal(panelId) {
     const cfg = llmConfig || {};
     const llmToggle = document.getElementById('llmToggle');
     const providerSel = document.getElementById('llmProvider');
-    const modelInput = document.getElementById('llmModel');
     const keyInput = document.getElementById('llmApiKey');
     const localeInput = document.getElementById('llmLocale');
     const localeHint = document.getElementById('llm_locale_hint');
     if (llmToggle) llmToggle.checked = Boolean(cfg.use_llm_queries);
     if (providerSel && cfg.llm_provider) providerSel.value = cfg.llm_provider;
-    if (modelInput) modelInput.value = cfg.llm_model || '';
+    llmDefaultModels = cfg.default_models || {};
+    llm_render_model_options(cfg.llm_model || '');
+    llm_update_key_link();
     if (keyInput) {
       keyInput.value = cfg.llm_api_key || '';
       set_api_key_visible(false);
@@ -803,6 +804,14 @@ function open_settings_modal(panelId) {
         `Detected language: ${eff}. Leave "auto" to follow your system, or enter a locale like fr-FR.`;
     }
     apply_llm_field_state();
+    // Fill the model picker once per session when the feature is usable;
+    // the refresh button re-fetches on demand.
+    if (cfg.use_llm_queries && cfg.llm_api_key) {
+      if (llmModelCache[llm_provider()]) llm_set_model_hint(llm_loaded_hint(), false);
+      else llm_load_models();
+    } else {
+      llm_set_model_hint(LLM_MODEL_HINT_IDLE, false);
+    }
 
     render_about_panel(appInfo || {});
 
@@ -861,6 +870,154 @@ function set_api_key_visible(visible) {
     const label = visible ? 'Hide API key' : 'Show API key';
     btn.setAttribute('aria-label', label);
     btn.title = label;
+  }
+}
+
+// -------------------------------------------------------------------------
+// Search terms: key portals + model picker
+// -------------------------------------------------------------------------
+
+const LLM_PROVIDERS = {
+  openai:    { label: 'OpenAI',        keyLabel: 'the OpenAI Platform',   keyUrl: 'https://platform.openai.com/api-keys' },
+  anthropic: { label: 'Anthropic',     keyLabel: 'the Anthropic Console', keyUrl: 'https://console.anthropic.com/settings/keys' },
+  gemini:    { label: 'Google Gemini', keyLabel: 'Google AI Studio',      keyUrl: 'https://aistudio.google.com/app/apikey' },
+};
+const LLM_CUSTOM_MODEL = '__custom__';
+const LLM_MODEL_HINT_IDLE = 'Load the list to pick a model, or keep the provider default.';
+
+// Models fetched this session, per provider: switching providers back and
+// forth refills the picker without another network call.
+let llmModelCache = {};
+// Provider -> default model id (from get_llm_config); labels the blank choice.
+let llmDefaultModels = {};
+
+function llm_provider() {
+  const sel = document.getElementById('llmProvider');
+  const value = sel ? sel.value : 'openai';
+  return LLM_PROVIDERS[value] ? value : 'openai';
+}
+
+function llm_update_key_link() {
+  const link = document.getElementById('llmKeyLink');
+  if (!link) return;
+  const info = LLM_PROVIDERS[llm_provider()];
+  link.textContent = info.keyLabel;
+  link.dataset.url = info.keyUrl;
+}
+
+// The model id as it will be saved; '' means the provider default.
+function llm_model_value() {
+  const sel = document.getElementById('llmModel');
+  if (!sel) return '';
+  if (sel.value === LLM_CUSTOM_MODEL) {
+    const custom = document.getElementById('llmModelCustom');
+    return custom ? custom.value.trim() : '';
+  }
+  return sel.value;
+}
+
+function llm_apply_custom_state() {
+  const sel = document.getElementById('llmModel');
+  const field = document.getElementById('llm_model_custom_field');
+  if (!sel || !field) return;
+  field.hidden = sel.value !== LLM_CUSTOM_MODEL;
+}
+
+/**
+ * Rebuild the model picker: provider default, the models loaded for the
+ * current provider, the configured id when it is not among them, then
+ * "Custom…" for a hand-typed id.
+ */
+function llm_render_model_options(selectedId) {
+  const sel = document.getElementById('llmModel');
+  if (!sel) return;
+  const provider = llm_provider();
+  const wanted = (selectedId || '').trim();
+  const loaded = llmModelCache[provider] || [];
+
+  sel.innerHTML = '';
+  const add = (value, label, title) => {
+    const o = document.createElement('option');
+    o.value = value;
+    o.textContent = label;
+    if (title) o.title = title;
+    sel.appendChild(o);
+  };
+  const def = llmDefaultModels[provider];
+  add('', def ? `Default (${def})` : 'Default for provider');
+  loaded.forEach(m => add(m.id, m.label || m.id, m.id));
+  if (wanted && !loaded.some(m => m.id === wanted)) add(wanted, wanted, wanted);
+  add(LLM_CUSTOM_MODEL, 'Custom…');
+
+  sel.value = wanted;
+  llm_apply_custom_state();
+}
+
+function llm_set_model_hint(text, isWarning) {
+  const hint = document.getElementById('llm_model_hint');
+  if (!hint) return;
+  hint.textContent = text;
+  hint.classList.toggle('warning', Boolean(isWarning));
+}
+
+function llm_loaded_hint() {
+  const n = (llmModelCache[llm_provider()] || []).length;
+  return `${n} model${n === 1 ? '' : 's'} available for this key.`;
+}
+
+// Ask the provider which models this key can use, then refill the picker.
+function llm_load_models() {
+  const provider = llm_provider();
+  const keyInput = document.getElementById('llmApiKey');
+  const key = keyInput ? keyInput.value.trim() : '';
+  const btn = document.getElementById('llmModelRefresh');
+  if (!key) {
+    llm_set_model_hint('Enter an API key to load the model list.', true);
+    return;
+  }
+  if (btn) { btn.disabled = true; btn.classList.add('busy'); }
+  llm_set_model_hint(`Loading models from ${LLM_PROVIDERS[provider].label}…`, false);
+
+  const done = () => {
+    if (btn) { btn.disabled = false; btn.classList.remove('busy'); }
+  };
+  pywebview.api.list_llm_models(provider, key).then(result => {
+    const r = result || {};
+    if (r.ok && Array.isArray(r.models)) {
+      llmModelCache[provider] = r.models;
+      // Only touch the picker if the user is still on that provider.
+      if (llm_provider() === provider) {
+        llm_render_model_options(llm_model_value());
+        llm_set_model_hint(llm_loaded_hint(), false);
+      }
+    } else if (llm_provider() === provider) {
+      llm_set_model_hint(r.error || 'Could not load the model list.', true);
+    }
+    done();
+  }).catch(err => {
+    console.error('list_llm_models failed:', err);
+    if (llm_provider() === provider) llm_set_model_hint('Could not load the model list.', true);
+    done();
+  });
+}
+
+function llm_on_provider_change() {
+  const provider = llm_provider();
+  const current = llm_model_value();
+  const loaded = llmModelCache[provider] || [];
+  // A model id rarely survives a provider switch: keep it only if the new
+  // provider's list knows it, otherwise fall back to that provider's default.
+  llm_render_model_options(loaded.some(m => m.id === current) ? current : '');
+  llm_update_key_link();
+  llm_set_model_hint(loaded.length ? llm_loaded_hint() : LLM_MODEL_HINT_IDLE, false);
+}
+
+function llm_on_toggle_change() {
+  apply_llm_field_state();
+  const toggle = document.getElementById('llmToggle');
+  const keyInput = document.getElementById('llmApiKey');
+  if (toggle && toggle.checked && keyInput && keyInput.value.trim() && !llmModelCache[llm_provider()]) {
+    llm_load_models();
   }
 }
 
@@ -1399,8 +1556,8 @@ async function save_settings() {
     const llmToggleEl = document.getElementById('llmToggle');
     await pywebview.api.set_llm_config(
       Boolean(llmToggleEl && llmToggleEl.checked),
-      document.getElementById('llmProvider').value,
-      document.getElementById('llmModel').value,
+      llm_provider(),
+      llm_model_value(),
       document.getElementById('llmApiKey').value,
       document.getElementById('llmLocale').value
     );
@@ -1627,15 +1784,47 @@ document.addEventListener('DOMContentLoaded', function() {
     if (settings_is_open()) setTimeout(() => close_settings_modal(), 0);
   });
 
-  // LLM feature toggle dims/undims its config fields live; eye button shows
-  // or hides the API key.
+  // LLM feature toggle dims/undims its config fields live (and fills the
+  // model picker the first time it is switched on); eye button shows or
+  // hides the API key.
   const llmToggle = document.getElementById('llmToggle');
-  if (llmToggle) llmToggle.addEventListener('change', apply_llm_field_state);
+  if (llmToggle) llmToggle.addEventListener('change', llm_on_toggle_change);
   const llmKeyToggle = document.getElementById('llmApiKeyToggle');
   if (llmKeyToggle) {
     llmKeyToggle.addEventListener('click', () => {
       const key = document.getElementById('llmApiKey');
       set_api_key_visible(Boolean(key && key.type === 'password'));
+    });
+  }
+
+  // Model picker: provider switch refills it, "Custom…" reveals a text
+  // field, the refresh button and a freshly pasted key load the list, and
+  // the key-portal link opens the provider's page in the browser.
+  const llmProviderSel = document.getElementById('llmProvider');
+  if (llmProviderSel) llmProviderSel.addEventListener('change', llm_on_provider_change);
+  const llmModelSel = document.getElementById('llmModel');
+  if (llmModelSel) {
+    llmModelSel.addEventListener('change', () => {
+      llm_apply_custom_state();
+      if (llmModelSel.value === LLM_CUSTOM_MODEL) {
+        const custom = document.getElementById('llmModelCustom');
+        if (custom) custom.focus();
+      }
+    });
+  }
+  const llmRefresh = document.getElementById('llmModelRefresh');
+  if (llmRefresh) llmRefresh.addEventListener('click', llm_load_models);
+  const llmKeyInput = document.getElementById('llmApiKey');
+  if (llmKeyInput) {
+    llmKeyInput.addEventListener('change', () => {
+      if (llmKeyInput.value.trim()) llm_load_models();
+    });
+  }
+  const llmKeyLink = document.getElementById('llmKeyLink');
+  if (llmKeyLink) {
+    llmKeyLink.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (llmKeyLink.dataset.url) pywebview.api.open_link(llmKeyLink.dataset.url);
     });
   }
 
