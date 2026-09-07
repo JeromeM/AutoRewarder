@@ -18,6 +18,7 @@ import webbrowser
 # display-layer requirements.
 
 from .config import (
+    APP_DIR,
     GUI_DIR,
     REPO,
     CURRENT_VERSION,
@@ -382,6 +383,65 @@ class AutoRewarderAPI:
     def open_link(self, url):
         """Open a URL in the system default browser."""
         webbrowser.open(url)
+
+    # ------------------------------------------------------------------
+    # Exposed to JS: Settings > About
+    # ------------------------------------------------------------------
+
+    def get_app_info(self):
+        """Return version and storage details for the About panel."""
+        return {
+            "version": CURRENT_VERSION,
+            "app_dir": APP_DIR,
+            "repo_url": f"https://github.com/{REPO}",
+            "platform": platform.system(),
+        }
+
+    def open_data_folder(self):
+        """
+        Open the app data folder (profiles, settings.json, logs) in the OS
+        file manager.
+
+        Returns:
+            bool: True if the file manager was launched, False otherwise.
+        """
+        try:
+            if sys.platform == "win32":
+                os.startfile(APP_DIR)
+            else:
+                subprocess.Popen(
+                    ["xdg-open", APP_DIR],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            return True
+        except Exception as e:
+            self.log(f"[ERROR] Could not open the data folder: {e}")
+            return False
+
+    def check_updates_now(self):
+        """
+        Check GitHub for a newer release on demand (About panel button).
+
+        Unlike the launch-time check, the result is returned to the caller
+        instead of being pushed into the activity log.
+
+        Returns:
+            dict: {ok, update_available, latest, current, url}. `ok` is False
+                when GitHub could not be reached; `latest` is None then.
+        """
+        try:
+            needs_update, latest = check_for_updates(logger=self.log)
+        except Exception as e:
+            self.log(f"[ERROR] Error checking for updates: {e}")
+            needs_update, latest = False, None
+        return {
+            "ok": latest is not None,
+            "update_available": bool(needs_update and latest),
+            "latest": latest,
+            "current": CURRENT_VERSION,
+            "url": f"https://github.com/{REPO}/releases/latest",
+        }
 
     def load_driver_in_background(self):
         """Warmup the WebDriver download, only if an account is selected."""
