@@ -230,7 +230,7 @@ def generate_queries(
         if logger:
             logger(f"[WARNING] LLM ({provider}) network error: {e}")
         return []
-    except (KeyError, IndexError, ValueError, TypeError) as e:
+    except (KeyError, IndexError, ValueError, TypeError, AttributeError) as e:
         if logger:
             logger(f"[WARNING] LLM ({provider}) unexpected response: {e}")
         return []
@@ -414,7 +414,7 @@ def list_models(provider, api_key, logger=None):
             "models": [],
             "error": "Network error. Check your connection.",
         }
-    except (KeyError, IndexError, ValueError, TypeError) as e:
+    except (KeyError, IndexError, ValueError, TypeError, AttributeError) as e:
         if logger:
             logger(f"[WARNING] LLM ({provider}) model list: unexpected response: {e}")
         return {
