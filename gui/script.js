@@ -660,6 +660,10 @@ async function prompt_and_create_account() {
 // and the "Discard changes?" prompt on close.
 const settingsDirty = new Set();
 let settingsActivePanel = 'general';
+// False while the modal is loading (or after a failed load): Save is
+// disabled and save_settings() refuses to run, so stale or default field
+// values can never be persisted.
+let settingsLoaded = false;
 let aboutRepoUrl = 'https://github.com/safarsin/AutoRewarder';
 
 function account_panel_id(accountId) {
@@ -743,6 +747,13 @@ function open_settings_modal(panelId) {
   settings_clear_dirty();
   settings_go(initialPanel.startsWith('acc:') ? 'general' : initialPanel);
 
+  // Nothing can be saved until every value below has been loaded into the
+  // fields; otherwise a click during loading would persist stale or default
+  // values.
+  settingsLoaded = false;
+  const saveBtn = document.getElementById('settingsSave');
+  if (saveBtn) saveBtn.disabled = true;
+
   Promise.all([
     pywebview.api.get_all_schedules(),
     pywebview.api.get_launch_on_startup(),
@@ -819,9 +830,14 @@ function open_settings_modal(panelId) {
     // programmatically), so nothing is dirty yet — but clear defensively.
     settings_clear_dirty();
     settings_go(initialPanel);
+    settingsLoaded = true;
+    if (saveBtn) saveBtn.disabled = false;
   }).catch(err => {
     console.error('Failed to load settings:', err);
     show_toast('Could not load settings.', 'error');
+    // The fields hold defaults or stale values: close rather than let the
+    // user edit and save them.
+    close_settings_modal({ force: true });
   });
 
   backdrop.hidden = false;
@@ -1469,6 +1485,10 @@ function make_form_field(labelText, inputType, className, value, opts) {
 // -------------------------------------------------------------------------
 
 async function save_settings() {
+  if (!settingsLoaded) {
+    show_toast('Settings are still loading.', 'warning');
+    return;
+  }
   const panels = Array.from(document.querySelectorAll('#settings_account_panels .settings-account-panel'));
   const closeToTrayWanted = document.getElementById('closeToTrayToggle').checked;
   const startupWanted = document.getElementById('startupToggle').checked;

@@ -1058,6 +1058,8 @@ input[type="number"]:focus {
   border-color: var(--accent);
 }
 .btn-primary:hover { background-color: var(--accent-hover); border-color: var(--accent-hover); }
+.btn-primary:disabled { opacity: 0.6; cursor: default; }
+.btn-primary:disabled:hover { background-color: var(--accent); border-color: var(--accent); }
 .btn-primary.danger { background-color: var(--danger); border-color: var(--danger); color: white; }
 .btn-primary.danger:hover { background-color: #e05555; border-color: #e05555; }
 
