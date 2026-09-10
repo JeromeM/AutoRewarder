@@ -66,6 +66,21 @@ dt.items.add(file);
 return dt.files.length;
 """
 
+# State of the upload zone, sampled before and after a drop. An accepted drop
+# flips the flyout into its loading state within half a second (and navigates
+# about a second later), so any of these moving is proof the page took the file
+# — including Bing answering with an error, which the file input wouldn't fix.
+_UPLOAD_ZONE_STATE_JS = r"""
+var pane = document.querySelector(arguments[0]);
+var loading = document.querySelector('#loadingimg, .loadingdiv, .dpload');
+return {
+  url: location.href,
+  pane: pane ? (pane.innerText || '').replace(/\s+/g, ' ').trim() : null,
+  shown: pane ? !!pane.getClientRects().length : null,
+  loading: loading ? !!loading.getClientRects().length : false
+};
+"""
+
 # The upload flyout itself. #sb_fileinput sits in the DOM whether or not the
 # flyout is open, and a file sent to it while it is closed goes nowhere, so this
 # is what tells us the camera click actually landed.
@@ -540,6 +555,8 @@ class SearchEngine:
             self._log(f"[INFO] Could not read the image to drop it: {e}")
             return False
 
+        before = self._upload_zone_state(driver)
+
         try:
             files = driver.execute_script(
                 _DROP_IMAGE_JS, payload, os.path.basename(image_path), target
@@ -549,7 +566,54 @@ class SearchEngine:
             self._log(f"[INFO] Drop upload failed ({short_error}).")
             return False
 
-        return bool(files)
+        if not files:
+            return False
+
+        # A DataTransfer carrying the file proves nothing about the page: a
+        # build that ignores synthetic drag events leaves it just as full. So
+        # wait for the zone to actually react, and let the caller fall back to
+        # the file input when it doesn't.
+        return self._drop_accepted(driver, before, timeout=5, poll_interval=0.25)
+
+    def _upload_zone_state(self, driver):
+        """Sample the upload zone's URL, flyout text and loading state."""
+        try:
+            state = driver.execute_script(
+                _UPLOAD_ZONE_STATE_JS, VISUAL_SEARCH_PANEL_SELECTOR
+            )
+        except WebDriverException:
+            return {}
+
+        return state if isinstance(state, dict) else {}
+
+    def _drop_accepted(self, driver, before, timeout, poll_interval, stop_event=None):
+        """
+        Whether the page reacted to the drop within `timeout` seconds.
+
+        Returns:
+            bool: True once the flyout starts loading, changes what it says,
+                closes, or the page navigates. False if nothing moved.
+        """
+        deadline = time.monotonic() + timeout
+
+        while True:
+            if stop_event is not None and stop_event.is_set():
+                return False
+
+            after = self._upload_zone_state(driver)
+
+            if after and (
+                after.get("loading")
+                or after.get("url") != before.get("url")
+                or after.get("pane") != before.get("pane")
+                or after.get("shown") != before.get("shown")
+            ):
+                return True
+
+            if time.monotonic() >= deadline:
+                return False
+
+            time.sleep(poll_interval)
 
     def _open_upload_panel(self, driver, human, button, poll_interval, stop_event=None):
         """
