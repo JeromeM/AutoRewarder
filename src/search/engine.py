@@ -5,7 +5,7 @@ import json
 import os
 import random
 import time
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 from selenium.webdriver.common.keys import Keys
 from selenium.common.exceptions import NoSuchElementException, WebDriverException
 from selenium.webdriver.common.by import By
@@ -21,6 +21,12 @@ from ..emulator import HumanBehavior
 REWARDS_VISUAL_SEARCH_URL = (
     "https://www.bing.com/?features=vsstreak,vstooltip&form=ML2XES"
 )
+
+# Image results for a query, which is how a person reaches the camera: they
+# search for something first. Bing stamps a search started from these results
+# with the same FORM=SBIIRP as the bare Images page, so this changes how the
+# camera is reached, not what Rewards records.
+VISUAL_SEARCH_IMAGES_QUERY_URL = "https://www.bing.com/images/search"
 
 # The Images vertical, and the surface the search actually runs on: Bing stamps
 # a search started there with FORM=SBIIRP, and that is the only code the Rewards
@@ -870,6 +876,27 @@ class SearchEngine:
 
         return False
 
+    def _images_results_url(self):
+        """
+        Image results for a query from the run's own pool, to reach the camera
+        from a page a person would plausibly be on.
+
+        Returns:
+            str: The image results URL, or the bare Images page when no query
+                could be read.
+        """
+        from ..config import JSON_FILE_PATH
+
+        try:
+            queries = self.load_queries_from_json(JSON_FILE_PATH, 1)
+        except Exception:
+            queries = []
+
+        if not queries:
+            return VISUAL_SEARCH_IMAGES_URL
+
+        return f"{VISUAL_SEARCH_IMAGES_QUERY_URL}?{urlencode({'q': queries[0]})}"
+
     def other_surface_url(self):
         """
         The surface to try when Rewards ignored the search we just made.
@@ -885,7 +912,7 @@ class SearchEngine:
         if not self.last_search_url:
             return None
 
-        if self.last_search_url == VISUAL_SEARCH_IMAGES_URL:
+        if "/images" in self.last_search_url:
             return REWARDS_VISUAL_SEARCH_URL
 
         return VISUAL_SEARCH_IMAGES_URL
@@ -930,6 +957,11 @@ class SearchEngine:
         entry_urls = list(VISUAL_SEARCH_URLS)
         if mission_url not in entry_urls:
             entry_urls.insert(1, mission_url)
+
+        # Search for something on the Images tab first, then reach for the
+        # camera there — same surface as the bare Images page, minus the
+        # teleporting. The bare page stays in the list right behind it.
+        entry_urls.insert(0, self._images_results_url())
         if search_url:
             if search_url in entry_urls:
                 entry_urls.remove(search_url)
