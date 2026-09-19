@@ -1283,6 +1283,11 @@ input[type="number"]:focus {
 
 .settings-panel { display: none; }
 .settings-panel.active { display: block; }
+.settings-panel.about-panel.active {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
 
 /* Footer summary of pending changes (left side of Save / Cancel). */
 .settings-dirty {
@@ -1737,6 +1742,18 @@ input[type="number"]:focus {
   user-select: text;
 }
 
+.about-person-link {
+  color: var(--accent);
+  text-decoration: none;
+  transition: color 120ms ease;
+}
+
+.about-person-link:hover,
+.about-person-link:focus-visible {
+  color: var(--accent-hover);
+  text-decoration: underline;
+}
+
 /* The data-folder path stays on one line (full value in the tooltip). */
 .about-kv dd.about-kv-path {
   overflow: hidden;
@@ -1749,6 +1766,26 @@ input[type="number"]:focus {
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 14px;
+}
+
+.about-credits {
+  display: grid;
+  gap: 6px;
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-soft);
+  font-size: 12.5px;
+}
+
+.about-credit {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 14px;
+  align-items: baseline;
+}
+
+.about-credit-label {
+  color: var(--text-dim);
 }
 
 /* =========================================================================
