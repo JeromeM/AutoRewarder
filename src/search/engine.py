@@ -1087,7 +1087,10 @@ class SearchEngine:
 
             outcome = "no widget"
 
-            browsed = self._browse_to_image_results(
+            # A forced surface is a retry aimed somewhere specific, so browsing
+            # to the image results would only walk away from it — and the first
+            # entry, the one browsing lands on, is no longer the one we want.
+            browsed = not search_url and self._browse_to_image_results(
                 driver, human, query, poll_interval, stop_event
             )
 
