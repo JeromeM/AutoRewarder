@@ -975,6 +975,8 @@ class SearchEngine:
                 )
                 return False
 
+            known_windows = set(driver.window_handles)
+
             human.click_element(images_tab)
 
             deadline = time.monotonic() + 10
@@ -988,6 +990,14 @@ class SearchEngine:
                 if "/images" in self._current_url(driver):
                     self._log(f"Searched '{query}', then switched to Images.")
                     return True
+
+                for window in driver.window_handles:
+                    if window in known_windows:
+                        continue
+
+                    driver.switch_to.window(window)
+                    known_windows.add(window)
+                    break
 
                 if time.monotonic() >= deadline:
                     return False
