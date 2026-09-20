@@ -45,6 +45,23 @@ VISUAL_SEARCH_URLS = (
     "https://www.bing.com",
 )
 
+# The search box on the Bing homepage, and the Images tab on a results page.
+# The tab is the one step that isn't always there: some flights and locales ship
+# a results page with no b-scopeListItem-* at all, so the browsed path has to be
+# allowed to fail.
+VISUAL_SEARCH_BOX_LOCATORS = (
+    (By.ID, "sb_form_q"),
+    (By.CSS_SELECTOR, "form#sb_form input[name='q']"),
+    (By.NAME, "q"),
+)
+
+VISUAL_SEARCH_IMAGES_TAB_LOCATORS = (
+    (By.XPATH, "//nav/ul/li[@id='b-scopeListItem-images']/a"),
+    (By.CSS_SELECTOR, "#b-scopeListItem-images a"),
+    (By.CSS_SELECTOR, "nav a[href*='/images/search']"),
+    (By.CSS_SELECTOR, "header a[href*='/images/search']"),
+)
+
 # Selectors for the camera button, from the most to the least specific.
 VISUAL_SEARCH_BUTTON_LOCATORS = (
     (By.ID, "sb_sbi"),
@@ -443,7 +460,14 @@ class SearchEngine:
             time.sleep(poll_interval)
 
     def _attempt_visual_search(
-        self, driver, human, url, image_path, poll_interval, stop_event=None
+        self,
+        driver,
+        human,
+        url,
+        image_path,
+        poll_interval,
+        stop_event=None,
+        navigate=True,
     ):
         """
         Run one full search-by-image attempt from a single entry page.
@@ -457,7 +481,10 @@ class SearchEngine:
         if stop_event is not None and stop_event.is_set():
             return "stopped"
 
-        driver.get(url)
+        # Already on the right page when the browsed path got us there.
+        if navigate:
+            driver.get(url)
+
         start_url = driver.current_url
 
         time.sleep(random.uniform(1, 4))
@@ -876,15 +903,8 @@ class SearchEngine:
 
         return False
 
-    def _images_results_url(self):
-        """
-        Image results for a query from the run's own pool, to reach the camera
-        from a page a person would plausibly be on.
-
-        Returns:
-            str: The image results URL, or the bare Images page when no query
-                could be read.
-        """
+    def _pick_query(self):
+        """One query from the run's own pool, or None when it can't be read."""
         from ..config import JSON_FILE_PATH
 
         try:
@@ -892,10 +912,92 @@ class SearchEngine:
         except Exception:
             queries = []
 
-        if not queries:
+        return queries[0] if queries else None
+
+    def _images_results_url(self, query):
+        """Image results for `query`, or the bare Images page without one."""
+        if not query:
             return VISUAL_SEARCH_IMAGES_URL
 
-        return f"{VISUAL_SEARCH_IMAGES_QUERY_URL}?{urlencode({'q': queries[0]})}"
+        return f"{VISUAL_SEARCH_IMAGES_QUERY_URL}?{urlencode({'q': query})}"
+
+    def _browse_to_image_results(
+        self, driver, human, query, poll_interval, stop_event=None
+    ):
+        """
+        Reach image results the way a person does: search for something on the
+        homepage, then switch to the Images tab.
+
+        The camera is the same on either path and Bing stamps both FORM=SBIIRP,
+        so this buys plausibility, not points — which is why every step is
+        allowed to give up and let the caller open the results directly.
+
+        Returns:
+            bool: True when the browser ended up on image results.
+        """
+        if not query or self._stopped(stop_event):
+            return False
+
+        try:
+            driver.get("https://www.bing.com")
+            time.sleep(random.uniform(1, 3))
+
+            search_box = self._find_visual_search_element(
+                driver,
+                VISUAL_SEARCH_BOX_LOCATORS,
+                timeout=10,
+                poll_interval=poll_interval,
+                require_displayed=True,
+                stop_event=stop_event,
+            )
+
+            if search_box is None:
+                return False
+
+            human_typing(search_box, query)
+            search_box.send_keys(Keys.RETURN)
+
+            time.sleep(random.uniform(2, 4))
+
+            images_tab = self._find_visual_search_element(
+                driver,
+                VISUAL_SEARCH_IMAGES_TAB_LOCATORS,
+                timeout=8,
+                poll_interval=poll_interval,
+                require_displayed=True,
+                stop_event=stop_event,
+            )
+
+            if images_tab is None:
+                self._log(
+                    "[INFO] No Images tab on the results page; "
+                    "opening the image results directly."
+                )
+                return False
+
+            human.click_element(images_tab)
+
+            deadline = time.monotonic() + 10
+
+            while True:
+                if self._stopped(stop_event):
+                    return False
+
+                # Any Bing images page counts: the tab's exact URL shape
+                # varies (/images/search?q=…, /images?q=…).
+                if "/images" in self._current_url(driver):
+                    self._log(f"Searched '{query}', then switched to Images.")
+                    return True
+
+                if time.monotonic() >= deadline:
+                    return False
+
+                time.sleep(poll_interval)
+
+        except WebDriverException as e:
+            short_error = str(e).split("\n")[0][:40]
+            self._log(f"[INFO] Could not browse to the image results ({short_error}).")
+            return False
 
     def other_surface_url(self):
         """
@@ -954,14 +1056,16 @@ class SearchEngine:
 
         mission_url = entry_url or REWARDS_VISUAL_SEARCH_URL
 
+        query = self._pick_query()
+
         entry_urls = list(VISUAL_SEARCH_URLS)
         if mission_url not in entry_urls:
             entry_urls.insert(1, mission_url)
 
-        # Search for something on the Images tab first, then reach for the
-        # camera there — same surface as the bare Images page, minus the
-        # teleporting. The bare page stays in the list right behind it.
-        entry_urls.insert(0, self._images_results_url())
+        # Image results for a real query, reached by searching and switching to
+        # the Images tab when that tab exists, and opened directly when it
+        # doesn't. Same surface either way; the bare Images page stays behind it.
+        entry_urls.insert(0, self._images_results_url(query))
         if search_url:
             if search_url in entry_urls:
                 entry_urls.remove(search_url)
@@ -983,9 +1087,19 @@ class SearchEngine:
 
             outcome = "no widget"
 
-            for url in entry_urls:
+            browsed = self._browse_to_image_results(
+                driver, human, query, poll_interval, stop_event
+            )
+
+            for index, url in enumerate(entry_urls):
                 outcome = self._attempt_visual_search(
-                    driver, human, url, image_path, poll_interval, stop_event
+                    driver,
+                    human,
+                    url,
+                    image_path,
+                    poll_interval,
+                    stop_event,
+                    navigate=not (browsed and index == 0),
                 )
 
                 if outcome in ("done", "stopped"):
